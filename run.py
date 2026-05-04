@@ -1,89 +1,64 @@
 """
-run.py — The Ignition Key
+run.py — Entry point
 
-Run this file to start the entire agent pipeline:
-  1. Agent pulls Meta Ads data
-  2. Agent analyzes every campaign
-  3. Agent writes the report
-  4. Evals score the report automatically
-  5. Report is shown only if it passes quality checks
-
-Usage:
-  python run.py
+Runs the 4-agent orchestrated pipeline:
+  1. DataFetcherAgent  — pulls live Meta Ads data
+  2. AnalystAgent      — applies decision rules
+  3. DecisionAgent     — LLM adds strategic layer
+  4. ReportingAgent    — formats the report
+  5. Evals            — 7 quality checks score the output
 """
 
 import sys
-import tools
-from agent import agent_executor
+from orchestrator import Orchestrator
 from evals import run_all_evals
 
 
 def main():
     print("\n" + "=" * 54)
-    print("  META ADS AGENT — WEEKLY REVIEW")
+    print("  META ADS AGENT — DAILY REPORT")
     print("=" * 54 + "\n")
 
-    # ── Step 1: Run the Agent ─────────────────────────────────────────────────
-    print("🤖  Agent starting...\n")
+    orchestrator = Orchestrator()
 
     try:
-        result = agent_executor.invoke({
-            "input": (
-                "Run the complete weekly Meta Ads performance review "
-                "for the last 7 days. "
-                "Pull the campaign data, analyze every single campaign, "
-                "and write the full formatted report."
-            )
-        })
+        report, raw_data = orchestrator.run(days=7)
     except KeyboardInterrupt:
         print("\n⚠️  Run cancelled by user.")
         sys.exit(0)
     except Exception as e:
-        print(f"\n❌  Agent failed to run.")
-        print(f"    Error: {str(e)}")
+        print(f"\n❌  Pipeline failed: {str(e)}")
         print("\n    Things to check:")
         print("    • Is GOOGLE_API_KEY set correctly in .env?")
         print("    • Is META_ACCESS_TOKEN valid and not expired?")
         print("    • Is your internet connection working?")
         sys.exit(1)
 
-    report = result.get("output", "").strip()
-
     if not report:
-        print("❌  Agent returned an empty response.")
+        print("❌  Pipeline returned an empty report.")
         print("    Check your GOOGLE_API_KEY and try again.")
         sys.exit(1)
 
-    # ── Step 2: Get the raw campaign data the agent pulled ────────────────────
-    # Stored as a global in tools.py when Tool 1 (pull_meta_ads_data) ran
-    campaign_data = tools.last_campaign_data
-
-    if not campaign_data:
-        print("⚠️  Warning: Could not retrieve raw campaign data for quality checks.")
-        print("   This usually means the Meta credentials aren't set up yet.")
-        print("   Showing the report without eval scoring:\n")
+    if not raw_data:
+        print("⚠️  No raw campaign data — skipping quality checks.\n")
         print(report)
         return
 
-    # ── Step 3: Run Evals ─────────────────────────────────────────────────────
+    # ── Evals ────────────────────────────────────────────────────────────────
     print("\n🔍  Running quality checks on the report...\n")
-    eval_results = run_all_evals(campaign_data, report)
+    eval_results = run_all_evals(raw_data, report)
 
-    # ── Step 4: Show Report Based on Eval Verdict ─────────────────────────────
     score   = eval_results["overall_score"]
     passed  = eval_results["passed"]
-    verdict = eval_results["verdict"]
 
     print("\n" + "=" * 54)
 
     if passed:
-        # All 4 evals passed — safe to use
         print("  ✅  FINAL REPORT  (All Quality Checks Passed)")
         print("=" * 54)
         print(report)
 
     elif score >= 0.7:
-        # Mostly good but has some issues — show with warning
         print("  ⚠️   FINAL REPORT  (Review Before Acting)")
         print("=" * 54)
         print(report)
@@ -95,11 +70,9 @@ def main():
         print("  Double-check the above before taking action.")
 
     else:
-        # Scored below 7/10 — do not act on this report
         print("  🚫  REPORT FAILED QUALITY CHECKS")
         print("=" * 54)
         print(f"  Score: {score * 10:.1f}/10 — Below acceptable threshold (7.0/10)")
-        print(f"  Verdict: {verdict}")
         print("\n  Issues found:")
         for f in eval_results["all_failures"]:
             print(f"  • {f}")
