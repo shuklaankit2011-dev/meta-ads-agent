@@ -42,8 +42,8 @@ def main():
         print(f"\n❌  Agent failed to run.")
         print(f"    Error: {str(e)}")
         print("\n    Things to check:")
-        print("    • Is OPENAI_API_KEY set correctly in .env?")
-        print("    • Do you have credits in your OpenAI account?")
+        print("    • Is GOOGLE_API_KEY set correctly in .env?")
+        print("    • Is META_ACCESS_TOKEN valid and not expired?")
         print("    • Is your internet connection working?")
         sys.exit(1)
 
@@ -51,7 +51,7 @@ def main():
 
     if not report:
         print("❌  Agent returned an empty response.")
-        print("    Check your OpenAI API key and try again.")
+        print("    Check your GOOGLE_API_KEY and try again.")
         sys.exit(1)
 
     # ── Step 2: Get the raw campaign data the agent pulled ────────────────────
