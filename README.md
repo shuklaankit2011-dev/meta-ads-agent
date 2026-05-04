@@ -1,31 +1,52 @@
-# 📊 Meta Ads Autonomous Agent
+# Meta Ads AI Agent
 
-An AI agent that autonomously pulls Meta Ads campaign data, analyzes performance,
-makes SCALE / PAUSE / TEST / WATCH decisions, and scores its own output quality.
+An autonomous AI agent that pulls Meta Ads campaign data, analyzes performance, makes actionable decisions, and can execute changes directly in your ad account — powered by Google Gemini and LangChain.
 
 ---
 
-## 📁 Project Structure
+## What It Does
+
+**Read mode (weekly review):**
+1. Pulls live campaign data from Meta Ads API (any date range)
+2. Analyzes every campaign — SCALE / PAUSE / TEST / WATCH decisions
+3. Generates a formatted performance report
+4. Scores its own output across 7 quality checks
+
+**Write mode (account changes):**
+- Pause or activate campaigns
+- Update daily budgets
+- Duplicate campaigns or ad sets
+- Change audience targeting (age, gender, countries)
+- Create new campaigns
+- Edit bid strategies
+- Schedule campaign start/end dates
+- Swap ad creatives (image + copy + URL)
+
+> The agent always asks for confirmation before executing any write action.
+
+---
+
+## Project Structure
 
 ```
 meta_agent/
-  ├── .env.example       ← Copy this → rename to .env → fill in keys
-  ├── .gitignore         ← Keeps your .env safe from GitHub
-  ├── requirements.txt   ← All dependencies
-  ├── tools.py           ← 3 tools the agent can use
-  ├── agent.py           ← The agent brain (GPT-4o + tools wired together)
-  ├── evals.py           ← 4 quality checks that run after every report
-  ├── run.py             ← Entry point — run this to start everything
-  └── eval_history.json  ← Auto-created, tracks scores over time
+  ├── .env.example       ← Copy → rename to .env → fill in keys
+  ├── .gitignore
+  ├── requirements.txt
+  ├── tools.py           ← All 12 tools (3 read + 9 write)
+  ├── agent.py           ← Agent brain (Gemini + tools + system prompt)
+  ├── evals.py           ← 7-point quality control system
+  └── run.py             ← Entry point
 ```
 
 ---
 
-## ⚡ Quick Start
+## Quick Start
 
-### 1. Clone / open in VS Code
+### 1. Clone and open
 ```bash
-cd meta_agent
+git clone https://github.com/shuklaankit2011-dev/meta-ads-agent.git
+cd meta-ads-agent
 ```
 
 ### 2. Create virtual environment
@@ -43,71 +64,61 @@ pip install -r requirements.txt
 ### 4. Set up your keys
 ```bash
 cp .env.example .env
-# Open .env and fill in your actual keys
+# Open .env and fill in your actual values
 ```
 
-**Getting your keys:**
-- `OPENAI_API_KEY` → https://platform.openai.com/api-keys
-- `META_ACCESS_TOKEN` → https://developers.facebook.com → My Apps → Marketing API → Generate Token (needs `ads_read` permission)
-- `META_AD_ACCOUNT_ID` → Meta Ads Manager → top left dropdown → copy the `act_XXXXXXX` ID
+| Key | Where to get it |
+|---|---|
+| `GOOGLE_API_KEY` | [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey) |
+| `META_ACCESS_TOKEN` | Meta for Developers → My Apps → Marketing API → Generate Token (needs `ads_read` + `ads_management`) |
+| `META_AD_ACCOUNT_ID` | Meta Ads Manager → top-left dropdown → copy the `act_XXXXXXX` ID |
 
 ### 5. Run it
 ```bash
 python run.py
 ```
 
-> **No Meta credentials yet?** No problem. Leave them as-is in `.env` and the agent
-> will automatically use realistic mock data so you can test the full pipeline.
-
 ---
 
-## 🤖 How It Works
+## How It Works
 
 ```
-You run: python run.py
-              ↓
-    [Agent Brain — GPT-4o]
-    "I need data first"
-              ↓
-    [Tool 1: pull_meta_ads_data]
-    Hits Meta Ads API → returns campaign numbers
-              ↓
-    [Agent Brain — GPT-4o]
-    "Now I'll analyze it"
-              ↓
-    [Tool 2: analyze_campaign_performance]
-    Applies decision rules → SCALE / PAUSE / TEST / WATCH
-              ↓
-    [Agent Brain — GPT-4o]
-    "Now write the report"
-              ↓
-    [Tool 3: write_performance_report]
-    Formats the final report
-              ↓
-    [Eval System — evals.py]
-    Scores the report on 4 checks
-              ↓
-    Report shown if score ≥ 7/10
+python run.py
+      ↓
+[Gemini 2.5 Flash — Agent Brain]
+      ↓
+[Tool 1] pull_meta_ads_data      → Hits Meta Ads API, returns live campaign metrics
+      ↓
+[Tool 2] analyze_campaign_performance → Applies decision rules → SCALE / PAUSE / TEST / WATCH
+      ↓
+[Tool 3] write_performance_report     → Formats the final report
+      ↓
+[evals.py] 7 quality checks score the output
+      ↓
+Report printed to terminal
 ```
 
 ---
 
-## 📊 Eval System
+## Metrics Pulled Per Campaign
 
-After every run, 4 checks score the output automatically:
-
-| Eval | What it checks |
+| Metric | Source |
 |---|---|
-| Coverage Check | Did every campaign get a decision? |
-| Logic Check | Do decisions match the numbers? (e.g. ROAS < 1x must be PAUSE) |
-| Hallucination Check | Did the agent make up any metrics? |
-| Format Check | Are all required report sections present? |
-
-Results are saved to `eval_history.json` so you can track improvement over time.
+| Spend | Meta Insights API |
+| Daily Budget | Meta Campaigns API |
+| Results (leads) | `lead` action type only (no double-counting) |
+| Cost per Result | Spend ÷ Results |
+| ROAS | Purchase revenue ÷ Spend |
+| CTR | Meta Insights API |
+| CPM | Meta Insights API |
+| CPC | Meta Insights API |
+| Impressions | Meta Insights API |
+| Reach | Meta Insights API |
+| Frequency | Meta Insights API |
 
 ---
 
-## 🔧 Decision Rules (in tools.py → analyze_campaign_performance)
+## Decision Rules
 
 | Condition | Decision |
 |---|---|
@@ -118,16 +129,61 @@ Results are saved to `eval_history.json` so you can track improvement over time.
 | 0 purchases AND Spend > ₹300 | PAUSE |
 | ROAS ≥ 2.0x AND CTR < 0.8% | TEST NEW CREATIVE |
 | ROAS ≥ 1.5x AND CTR < 1.0% | TEST NEW CREATIVE |
+| Cost/Result > ₹500 AND Results < 5 | TEST |
+| Frequency > 3.0x | TEST NEW CREATIVE (fatigue) |
 | ROAS 1.0–2.0x AND CTR ≥ 1.0% | WATCH |
-| ROAS 1.0–1.5x AND CTR < 1.0% | WATCH & OPTIMISE |
 | No spend | INACTIVE |
 
-Adjust these thresholds in `tools.py` to match your account benchmarks.
+Lead-gen campaigns are evaluated separately — e-commerce ROAS rules do not apply.
 
 ---
 
-## 🚀 Next Steps (Coming Soon)
+## Eval System (7 Checks)
 
-- **Gap 3 — Production:** Schedule to run every Monday 9AM automatically
-- **Slack Integration:** Agent pings your team with the report
-- **Alert System:** Notifies you if something breaks at 3AM
+| Check | What it verifies |
+|---|---|
+| Coverage | Every campaign got a decision |
+| Logic | Decisions match the numbers (e.g. ROAS < 1x must be PAUSE) |
+| Hallucination | No invented metrics — all numbers traceable to source data |
+| Format | All required report sections are present |
+| Metrics Accuracy | CPM, CPC, frequency values match source data |
+| Frequency Check | High-frequency campaigns flagged for creative fatigue |
+| Cost per Result | CPL calculation within 5% tolerance |
+
+---
+
+## Write Tools Reference
+
+| Tool | What it does |
+|---|---|
+| `pause_or_activate_campaign` | Set campaign status to PAUSED or ACTIVE |
+| `update_campaign_budget` | Change daily budget (pass INR, converts to paise automatically) |
+| `duplicate_campaign` | Copy a campaign with a new name |
+| `duplicate_adset` | Copy an ad set with a new name |
+| `update_audience_targeting` | Change age range, gender, or target countries on an ad set |
+| `create_campaign` | Create a new campaign from scratch |
+| `update_bid_strategy` | Change bid strategy and bid cap across all ad sets in a campaign |
+| `schedule_campaign` | Set start and end dates on an ad set |
+| `swap_ad_creative` | Replace image, copy, and destination URL on an existing ad |
+
+---
+
+## Example Prompts
+
+```
+Run weekly review for last 15 days
+Pause campaign 'Retargeting - Mumbai'
+Increase budget on 'Lead Gen - Delhi' to ₹2000/day
+Duplicate campaign 'Top Performer' as 'Top Performer - Test B'
+Change targeting on adset 'Lookalike 1%' to ages 25-45, women only, India
+Create a new PAUSED campaign called 'Brand Awareness - Q2' with ₹500/day budget
+```
+
+---
+
+## Tech Stack
+
+- **LLM:** Google Gemini 2.5 Flash via `langchain-google-genai`
+- **Agent framework:** LangChain `create_tool_calling_agent` + `AgentExecutor`
+- **Data source:** Meta Marketing API v18.0
+- **Language:** Python 3.10+
