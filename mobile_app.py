@@ -300,17 +300,9 @@ Always include: spend, leads, CPL, CTR, CPM in your answers.
 For diagnosis: check CPM (auction), CTR (creative fatigue), frequency >2.5 (saturation), CPL↑ with CTR stable (form/LP issue).
 Be concise, specific, and actionable. No fluff."""
 
-    if st.button("🔍 Debug: List available Gemini models", key="list_models"):
-        try:
-            models = [m.name for m in genai.list_models() if "generateContent" in m.supported_generation_methods]
-            st.code("\n".join(models))
-        except Exception as e:
-            st.error(f"Could not list models: {e}")
-
     if "chat_messages" not in st.session_state:
         st.session_state.chat_messages = []
 
-    # render history
     for msg in st.session_state.chat_messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
@@ -322,7 +314,6 @@ Be concise, specific, and actionable. No fluff."""
 
         with st.chat_message("assistant"):
             with st.spinner("Fetching data & thinking…"):
-                # Build history for Gemini (all except last user message)
                 history = []
                 for m in st.session_state.chat_messages[:-1]:
                     history.append({
@@ -330,16 +321,7 @@ Be concise, specific, and actionable. No fluff."""
                         "parts": [{"text": m["content"]}],
                     })
 
-                # pick first available model that supports generateContent
-                try:
-                    available = [
-                        m.name for m in genai.list_models()
-                        if "generateContent" in m.supported_generation_methods
-                        and "flash" in m.name
-                    ]
-                    model_name = available[0] if available else "models/gemini-1.5-flash"
-                except Exception:
-                    model_name = "models/gemini-1.5-flash"
+                model_name = "models/gemini-2.5-flash"
 
                 try:
                     model = genai.GenerativeModel(
