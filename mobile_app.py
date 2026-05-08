@@ -391,59 +391,157 @@ Be concise, specific, and actionable."""
 # TAB — DASHBOARD
 # ══════════════════════════════════════════════════════════════════════
 with tab_dash:
-    st.subheader("Campaign Overview")
+    import plotly.express as px
+    import pandas as pd
 
-    if st.button("🔌 Test Connection", key="test_conn"):
-        with st.spinner("Checking…"):
-            me   = api(f"{BASE}/me", {"fields": "id,name"})
-            acct = api(f"{BASE}/{ACCOUNT}", {"fields": "id,name,account_status"})
-        if "error" in me:
-            st.error(f"Token error: {me['error']['message']}")
-        else:
-            st.success(f"Token OK — {me.get('name')} ({me.get('id')})")
-        if "error" in acct:
-            st.error(f"Account error: {acct['error']['message']}")
-        else:
-            status_map = {1:"Active", 2:"Disabled", 3:"Unsettled", 9:"In Grace Period"}
-            st.success(f"Account: {acct.get('name','—')} | {status_map.get(acct.get('account_status'), '?')}")
+    # ── controls ─────────────────────────────────────────────────────
+    col_a, col_b = st.columns(2)
+    with col_a:
+        period = st.selectbox("Period", [
+            "Today", "Last 3 days", "Last 7 days", "Last 14 days",
+            "Last 30 days", "This month", "Custom"
+        ], index=2, key="dash_period")
+    with col_b:
+        dash_level = st.selectbox("Level", ["Campaign", "Ad Set", "Ad"], key="dash_level")
 
-    period     = st.selectbox("Period", ["Last 7 days", "Last 14 days", "Last 30 days", "This month"], key="dash_period")
-    period_map = {"Last 7 days": 7, "Last 14 days": 14, "Last 30 days": 30, "This month": None}
+    if period == "Custom":
+        c1, c2 = st.columns(2)
+        custom_since = c1.date_input("From", value=(datetime.now() - timedelta(days=7)).date(), key="custom_from")
+        custom_until = c2.date_input("To",   value=datetime.now().date(), key="custom_to")
 
-    if st.button("Fetch Campaigns", key="fetch_camps"):
-        with st.spinner("Fetching…"):
-            today = datetime.now()
-            if period_map[period]:
-                since = (today - timedelta(days=period_map[period])).strftime("%Y-%m-%d")
-            else:
-                since = today.replace(day=1).strftime("%Y-%m-%d")
+    multi_acct = st.toggle("Compare all 3 accounts", key="multi_acct")
+
+    if st.button("Load Dashboard", key="fetch_camps", use_container_width=True):
+        today = datetime.now()
+        if period == "Today":
+            since = until = today.strftime("%Y-%m-%d")
+        elif period == "Custom":
+            since = custom_since.strftime("%Y-%m-%d")
+            until = custom_until.strftime("%Y-%m-%d")
+        elif period == "This month":
+            since = today.replace(day=1).strftime("%Y-%m-%d")
             until = today.strftime("%Y-%m-%d")
-            rows, err = _fetch(ACCOUNT, since, until, "campaign")
-
-        if err:
-            st.error(err)
-        elif not rows:
-            st.warning("No data returned for this account.")
         else:
-            total_spend = sum(float(r.get("spend", 0)) for r in rows)
-            total_leads = sum(leads_count(r) for r in rows)
-            avg_cpl     = total_spend / total_leads if total_leads else None
+            days  = {"Last 3 days": 3, "Last 7 days": 7, "Last 14 days": 14, "Last 30 days": 30}[period]
+            since = (today - timedelta(days=days)).strftime("%Y-%m-%d")
+            until = today.strftime("%Y-%m-%d")
 
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Spend", fmt_inr(total_spend))
-            c2.metric("Leads", str(total_leads))
-            c3.metric("CPL",   fmt_inr(avg_cpl))
+        level_key = {"Campaign": "campaign", "Ad Set": "adset", "Ad": "ad"}[dash_level]
+        name_key  = {"campaign": "campaign_name", "adset": "adset_name", "ad": "ad_name"}[level_key]
+
+        # fetch accounts
+        accounts_to_fetch = ACCOUNTS if multi_acct else {selected_label: DEFAULT_ACCOUNT}
+        all_rows = []
+        with st.spinner("Fetching…"):
+            for acct_label, acct_id in accounts_to_fetch.items():
+                rows, err = _fetch(acct_id, since, until, level_key, limit=100)
+                if err:
+                    st.error(f"{acct_label}: {err}")
+                    continue
+                for r in rows:
+                    r["_account"] = acct_label.split("(")[0].strip()
+                all_rows.extend(rows)
+
+        if not all_rows:
+            st.warning("No data returned.")
+        else:
+            # ── build dataframe ──────────────────────────────────────
+            df = pd.DataFrame([{
+                "Name":     r.get(name_key, "—"),
+                "Account":  r.get("_account", "—"),
+                "Spend":    round(float(r.get("spend", 0)), 0),
+                "Leads":    leads_count(r),
+                "CPL":      round(cpl(r), 0) if cpl(r) else None,
+                "CTR":      round(float(r.get("ctr", 0)), 2),
+                "CPM":      round(float(r.get("cpm", 0)), 0),
+                "CPC":      round(float(r.get("cpc", 0)), 0),
+                "Freq":     round(float(r.get("frequency", 0)), 2),
+                "Reach":    int(r.get("reach", 0)),
+                "Impressions": int(r.get("impressions", 0)),
+            } for r in all_rows])
+
+            # ── summary KPIs ─────────────────────────────────────────
+            total_spend  = df["Spend"].sum()
+            total_leads  = df["Leads"].sum()
+            total_reach  = df["Reach"].sum()
+            avg_cpl      = total_spend / total_leads if total_leads else 0
+            avg_ctr      = df["CTR"].mean()
+
+            k1, k2, k3, k4, k5 = st.columns(5)
+            k1.metric("Spend",  fmt_inr(total_spend))
+            k2.metric("Leads",  int(total_leads))
+            k3.metric("CPL",    fmt_inr(avg_cpl))
+            k4.metric("CTR",    f"{avg_ctr:.2f}%")
+            k5.metric("Reach",  f"{int(total_reach):,}")
+
             st.divider()
 
-            for r in sorted(rows, key=lambda x: float(x.get("spend", 0)), reverse=True):
-                with st.expander(r.get("campaign_name", "—")[:50]):
-                    col1, col2 = st.columns(2)
-                    col1.metric("Spend", fmt_inr(float(r.get("spend", 0))))
-                    col2.metric("Leads", str(leads_count(r)))
-                    col1.metric("CPL",   fmt_inr(cpl(r)))
-                    col2.metric("CTR",   f"{float(r.get('ctr',0)):.2f}%")
-                    col1.metric("CPM",   fmt_inr(float(r.get("cpm", 0))))
-                    col2.metric("Freq",  f"{float(r.get('frequency',0)):.2f}x")
+            # ── charts ───────────────────────────────────────────────
+            chart_metric = st.radio(
+                "Chart metric", ["Spend", "Leads", "CPL", "CTR", "CPM"],
+                horizontal=True, key="chart_metric"
+            )
+
+            df_sorted = df.dropna(subset=[chart_metric]).sort_values(chart_metric, ascending=False).head(15)
+            short_names = df_sorted["Name"].str[:30]
+
+            color_arg = {"color": "Account"} if multi_acct else {}
+            fig = px.bar(
+                df_sorted,
+                x=chart_metric,
+                y=short_names,
+                orientation="h",
+                text=chart_metric,
+                height=max(300, len(df_sorted) * 36),
+                **color_arg,
+            )
+            fig.update_layout(
+                yaxis_title="", xaxis_title=chart_metric,
+                margin=dict(l=0, r=10, t=10, b=10),
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="white"), yaxis=dict(autorange="reversed"),
+            )
+            fig.update_traces(texttemplate="%{text:,.0f}", textposition="outside")
+            st.plotly_chart(fig, use_container_width=True)
+
+            # ── best / worst ─────────────────────────────────────────
+            df_leads = df[df["Leads"] > 0].copy()
+            if not df_leads.empty:
+                best = df_leads.loc[df_leads["CPL"].idxmin()]
+                worst = df_leads.loc[df_leads["CPL"].idxmax()]
+                st.markdown("**🏆 Best CPL**")
+                st.success(f"{best['Name'][:45]}  —  CPL {fmt_inr(best['CPL'])} | Leads {int(best['Leads'])} | Spend {fmt_inr(best['Spend'])}")
+                st.markdown("**⚠️ Worst CPL**")
+                st.error(f"{worst['Name'][:45]}  —  CPL {fmt_inr(worst['CPL'])} | Leads {int(worst['Leads'])} | Spend {fmt_inr(worst['Spend'])}")
+
+            st.divider()
+
+            # ── sortable table ───────────────────────────────────────
+            sort_col = st.selectbox("Sort table by", ["Spend", "Leads", "CPL", "CTR", "CPM", "Freq"], key="sort_col")
+            df_display = df.sort_values(sort_col, ascending=(sort_col == "CPL"), na_position="last")
+            df_display["Name"] = df_display["Name"].str[:40]
+            st.dataframe(
+                df_display,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Spend": st.column_config.NumberColumn("Spend ₹", format="₹%.0f"),
+                    "CPL":   st.column_config.NumberColumn("CPL ₹",   format="₹%.0f"),
+                    "CPM":   st.column_config.NumberColumn("CPM ₹",   format="₹%.0f"),
+                    "CPC":   st.column_config.NumberColumn("CPC ₹",   format="₹%.0f"),
+                    "CTR":   st.column_config.NumberColumn("CTR %",   format="%.2f%%"),
+                    "Freq":  st.column_config.NumberColumn("Freq",    format="%.2fx"),
+                    "Reach": st.column_config.NumberColumn("Reach",   format="%d"),
+                },
+            )
+
+            # ── CSV export ───────────────────────────────────────────
+            csv = df.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                "⬇️ Download CSV", csv,
+                file_name=f"meta_ads_{since}_{until}.csv",
+                mime="text/csv", use_container_width=True,
+            )
 
 
 # ══════════════════════════════════════════════════════════════════════
