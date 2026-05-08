@@ -2,6 +2,7 @@
 streamlit>=1.35.0
 requests>=2.32.0
 python-dotenv>=1.0.0
+google-generativeai>=0.7.0
 
 # Agent scripts (install locally: pip install -r requirements_agent.txt)
 # langchain, langgraph, langchain-google-genai → moved to requirements_agent.txt
