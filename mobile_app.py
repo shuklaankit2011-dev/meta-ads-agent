@@ -86,19 +86,43 @@ with st.sidebar:
         TOKEN = st.session_state.active_token  # override global
 
     st.divider()
-    st.markdown("**Get a 60-day token (recommended):**")
-    st.markdown("1. Go to [Graph API Explorer](https://developers.facebook.com/tools/explorer)")
-    st.markdown("2. Generate token with `ads_read`, `pages_manage_ads`, `leads_retrieval`")
-    st.markdown("3. Click ··· → **Get Long-Lived User Token**")
-    st.markdown("4. Paste above ↑")
-
-    st.divider()
     if st.button("🔌 Test current token", key="sidebar_test"):
         me = requests.get(f"{BASE}/me", params={"access_token": TOKEN, "fields": "id,name"}).json()
         if "error" in me:
             st.error(me["error"]["message"])
         else:
             st.success(f"Valid — {me.get('name')}")
+
+    st.divider()
+    st.markdown("### ♻️ Extend to 60-day Token")
+    st.caption("Find these at: developers.facebook.com → Your App → App Settings → Basic")
+    app_id     = st.text_input("App ID",     key="app_id",     placeholder="123456789")
+    app_secret = st.text_input("App Secret", key="app_secret", placeholder="abc123…", type="password")
+
+    if st.button("Generate 60-day Token", key="extend_token"):
+        current_tok = st.session_state.get("active_token", TOKEN)
+        if not app_id or not app_secret:
+            st.error("Enter App ID and App Secret first.")
+        elif not current_tok:
+            st.error("Paste a short-lived token above first.")
+        else:
+            r = requests.get("https://graph.facebook.com/oauth/access_token", params={
+                "grant_type":        "fb_exchange_token",
+                "client_id":         app_id,
+                "client_secret":     app_secret,
+                "fb_exchange_token": current_tok,
+            }).json()
+            if "error" in r:
+                st.error(r["error"]["message"])
+            else:
+                long_token = r.get("access_token", "")
+                expires_in = r.get("expires_in", 0)
+                days = round(expires_in / 86400)
+                st.success(f"Got a {days}-day token!")
+                st.session_state.active_token = long_token
+                TOKEN = long_token
+                st.code(long_token, language=None)
+                st.caption("Copy this → paste into Streamlit Cloud Secrets to make it permanent.")
 
 
 # ── helpers ──────────────────────────────────────────────────────────
