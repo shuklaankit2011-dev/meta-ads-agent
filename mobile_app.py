@@ -142,51 +142,84 @@ def _fmt_rows(rows, level):
     return "\n".join(lines)
 
 
-# ── account switcher ──────────────────────────────────────────────────
+# ── account switcher (default only — AI can override per prompt) ──────
 st.title("🤖 Meta Ads AI")
 
 selected_label = st.selectbox(
-    "Ad Account", list(ACCOUNTS.keys()),
+    "Default account", list(ACCOUNTS.keys()),
     key="account_switcher", label_visibility="collapsed",
 )
-ACCOUNT = ACCOUNTS[selected_label]
-st.caption(f"`{ACCOUNT}`")
+DEFAULT_ACCOUNT = ACCOUNTS[selected_label]
+st.caption(f"Default: `{DEFAULT_ACCOUNT}` — you can ask about any account in chat")
 st.divider()
 
-# ── Gemini tools (use ACCOUNT from session scope) ─────────────────────
-def get_campaign_performance(days: int = 7) -> str:
-    """Get campaign-level performance metrics (spend, leads, CPL, CTR, CPM, frequency, reach) for the selected Meta Ads account over the last N days."""
+# ── account resolver for tools ────────────────────────────────────────
+ACCOUNT_ALIASES = {
+    "wedezine studio": "act_1151039113402293",
+    "wedezine":        "act_1151039113402293",
+    "studio":          "act_1151039113402293",
+    "1151039113402293":"act_1151039113402293",
+    "unnamed":         "act_386459926600152",
+    "386459926600152": "act_386459926600152",
+    "yoho":            "act_1911713625671421",
+    "1911713625671421":"act_1911713625671421",
+}
+
+def _resolve_account(account_name: str) -> str:
+    """Map a friendly name or ID to act_XXXX format."""
+    if not account_name or account_name.lower() in ("current", "default", "selected", ""):
+        return DEFAULT_ACCOUNT
+    key = account_name.lower().strip()
+    return ACCOUNT_ALIASES.get(key, DEFAULT_ACCOUNT)
+
+
+# ── Gemini tools ──────────────────────────────────────────────────────
+def get_campaign_performance(days: int = 7, account_name: str = "current") -> str:
+    """Get campaign-level performance (spend, leads, CPL, CTR, CPM, frequency, reach).
+    account_name: 'WeDezine Studio', 'WeDezine Unnamed', 'YOHO', or 'current' for default.
+    Can be called multiple times for different accounts."""
+    acc = _resolve_account(account_name)
     since, until = _date_range(days)
-    rows, err = _fetch(ACCOUNT, since, until, "campaign")
-    return err or _fmt_rows(rows, "campaign")
+    rows, err = _fetch(acc, since, until, "campaign")
+    label = account_name if account_name else "current"
+    return f"[{label} | {acc}]\n" + (err or _fmt_rows(rows, "campaign"))
 
 
-def get_adset_performance(days: int = 7) -> str:
-    """Get ad set level performance metrics for the selected account over the last N days."""
+def get_adset_performance(days: int = 7, account_name: str = "current") -> str:
+    """Get ad set level performance metrics.
+    account_name: 'WeDezine Studio', 'WeDezine Unnamed', 'YOHO', or 'current'."""
+    acc = _resolve_account(account_name)
     since, until = _date_range(days)
-    rows, err = _fetch(ACCOUNT, since, until, "adset")
-    return err or _fmt_rows(rows, "adset")
+    rows, err = _fetch(acc, since, until, "adset")
+    label = account_name if account_name else "current"
+    return f"[{label} | {acc}]\n" + (err or _fmt_rows(rows, "adset"))
 
 
-def get_ad_performance(days: int = 7) -> str:
-    """Get individual ad performance metrics for the selected account over the last N days."""
+def get_ad_performance(days: int = 7, account_name: str = "current") -> str:
+    """Get individual ad performance metrics.
+    account_name: 'WeDezine Studio', 'WeDezine Unnamed', 'YOHO', or 'current'."""
+    acc = _resolve_account(account_name)
     since, until = _date_range(days)
-    rows, err = _fetch(ACCOUNT, since, until, "ad")
-    return err or _fmt_rows(rows, "ad")
+    rows, err = _fetch(acc, since, until, "ad")
+    label = account_name if account_name else "current"
+    return f"[{label} | {acc}]\n" + (err or _fmt_rows(rows, "ad"))
 
 
-def compare_periods(current_days: int = 7, previous_days: int = 22, level: str = "campaign") -> str:
-    """Compare performance between current and previous period. level = campaign | adset | ad."""
+def compare_periods(current_days: int = 7, previous_days: int = 22, level: str = "campaign", account_name: str = "current") -> str:
+    """Compare performance between current and previous period. level = campaign | adset | ad.
+    account_name: 'WeDezine Studio', 'WeDezine Unnamed', 'YOHO', or 'current'."""
+    acc   = _resolve_account(account_name)
     today = datetime.now()
     cur_end    = today.strftime("%Y-%m-%d")
     cur_start  = (today - timedelta(days=current_days)).strftime("%Y-%m-%d")
     prev_end   = (today - timedelta(days=current_days + 1)).strftime("%Y-%m-%d")
     prev_start = (today - timedelta(days=current_days + previous_days)).strftime("%Y-%m-%d")
-    cur,  e1 = _fetch(ACCOUNT, cur_start,  cur_end,  level)
-    prev, e2 = _fetch(ACCOUNT, prev_start, prev_end, level)
+    cur,  e1 = _fetch(acc, cur_start,  cur_end,  level)
+    prev, e2 = _fetch(acc, prev_start, prev_end, level)
     if e1: return e1
     if e2: return e2
-    return f"CURRENT ({current_days}d):\n{_fmt_rows(cur, level)}\n\nPREVIOUS ({previous_days}d):\n{_fmt_rows(prev, level)}"
+    label = account_name if account_name else "current"
+    return f"[{label}] CURRENT ({current_days}d):\n{_fmt_rows(cur, level)}\n\nPREVIOUS ({previous_days}d):\n{_fmt_rows(prev, level)}"
 
 
 def search_interests(query: str) -> str:
@@ -291,14 +324,20 @@ with tab_chat:
     genai.configure(api_key=GOOGLE_API_KEY)
 
     SYSTEM_PROMPT = f"""You are a Meta Ads performance analyst for a digital marketing agency in India.
-Currently selected account: {selected_label} ({ACCOUNT}).
-All accounts: WeDezine Studio (act_1151039113402293), WeDezine Unnamed (act_386459926600152), YOHO (act_1911713625671421).
-Currency: INR (₹). Timezone: IST.
 
-Use your tools to fetch real data before answering performance questions.
+AD ACCOUNTS (you can query ANY of these in a single response):
+- WeDezine Studio  → account_name="WeDezine Studio"  (act_1151039113402293)
+- WeDezine Unnamed → account_name="WeDezine Unnamed" (act_386459926600152)
+- YOHO             → account_name="YOHO"             (act_1911713625671421)
+
+Default account (if user doesn't specify): {selected_label} ({DEFAULT_ACCOUNT})
+
+IMPORTANT: If the user asks about multiple accounts or "all accounts", call the tool MULTIPLE TIMES — once per account — and compare the results in your response.
+
+Currency: INR (₹). Timezone: IST.
 Always include: spend, leads, CPL, CTR, CPM in your answers.
-For diagnosis: check CPM (auction), CTR (creative fatigue), frequency >2.5 (saturation), CPL↑ with CTR stable (form/LP issue).
-Be concise, specific, and actionable. No fluff."""
+For diagnosis: CPM↑ = auction competition, CTR↓ = creative fatigue, freq >2.5 = saturation, CPL↑ + CTR stable = form/LP issue.
+Be concise, specific, and actionable."""
 
     if "chat_messages" not in st.session_state:
         st.session_state.chat_messages = []
