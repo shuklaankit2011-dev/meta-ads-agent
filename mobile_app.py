@@ -323,17 +323,25 @@ Be concise, specific, and actionable. No fluff."""
                         "parts": [{"text": m["content"]}],
                     })
 
-                model = genai.GenerativeModel(
-                    model_name="gemini-1.5-flash",
-                    tools=GEMINI_TOOLS,
-                    system_instruction=SYSTEM_PROMPT,
-                )
-                chat_session = model.start_chat(
-                    history=history,
-                    enable_automatic_function_calling=True,
-                )
-                response = chat_session.send_message(prompt)
-                answer   = response.text
+                answer = None
+                for model_name in ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-pro"]:
+                    try:
+                        model = genai.GenerativeModel(
+                            model_name=model_name,
+                            tools=GEMINI_TOOLS,
+                            system_instruction=SYSTEM_PROMPT,
+                        )
+                        chat_session = model.start_chat(
+                            history=history,
+                            enable_automatic_function_calling=True,
+                        )
+                        response = chat_session.send_message(prompt)
+                        answer   = response.text
+                        break
+                    except Exception as e:
+                        if model_name == "gemini-pro":
+                            answer = f"Gemini error: {e}"
+                        continue
 
             st.markdown(answer)
 
