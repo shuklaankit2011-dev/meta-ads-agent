@@ -23,9 +23,16 @@ def _secret(key):
 
 APP_PASSWORD = _secret("APP_PASSWORD") or "wedezine2024"
 TOKEN        = _secret("META_ACCESS_TOKEN")
-ACCOUNT      = _secret("META_AD_ACCOUNT_ID")
 BASE         = "https://graph.facebook.com/v18.0"
-PAGE_ID      = "111879133966646"
+
+ACCOUNTS = {
+    "WeDezine Studio  (1151039113402293)": "act_1151039113402293",
+    "WeDezine Unnamed (386459926600152)":  "act_386459926600152",
+    "YOHO             (1911713625671421)": "act_1911713625671421",
+}
+
+# PAGE_ID for lead lookup — belongs to WeDezine Studio page
+WDEZINE_PAGE_ID = "111879133966646"
 
 # ── simple password gate ──────────────────────────────────────────────
 if "authenticated" not in st.session_state:
@@ -58,19 +65,34 @@ st.markdown("""
   h1 { font-size: 1.4rem !important; }
   h2 { font-size: 1.1rem !important; }
   .stButton>button { width: 100%; border-radius: 10px; height: 3rem; font-size: 1rem; }
-  .metric-box { background:#1e1e2e; border-radius:10px; padding:12px; margin:6px 0; }
   .green { color: #4ade80; } .red { color: #f87171; } .yellow { color: #facc15; }
   .tag { display:inline-block; background:#334155; border-radius:6px; padding:2px 8px;
          font-size:0.75rem; margin:2px; }
+  .account-badge { background:#1e3a5f; border-radius:8px; padding:6px 12px;
+                   font-size:0.85rem; font-weight:600; margin-bottom:8px; display:inline-block; }
 </style>
 """, unsafe_allow_html=True)
 
 
+# ── account switcher (top of every page) ─────────────────────────────
+st.title("📊 Meta Ads Agent")
+
+selected_label = st.selectbox(
+    "Ad Account",
+    list(ACCOUNTS.keys()),
+    key="account_switcher",
+    label_visibility="collapsed",
+)
+ACCOUNT = ACCOUNTS[selected_label]
+st.caption(f"Account: `{ACCOUNT}`")
+st.divider()
+
+
 # ── helpers ──────────────────────────────────────────────────────────
-def api(url, params=None, method="get"):
+def api(url, params=None):
     p = dict(params or {})
     p["access_token"] = TOKEN
-    r = getattr(requests, method)(url, params=p, timeout=30)
+    r = requests.get(url, params=p, timeout=30)
     return r.json()
 
 
@@ -94,7 +116,7 @@ def pct_change(new, old):
     if not old: return ""
     c = ((new - old) / old) * 100
     arrow = "▲" if c > 0 else "▼"
-    color = "green" if c < 0 else "red"  # lower CPL = green
+    color = "green" if c < 0 else "red"
     return f'<span class="{color}">{arrow}{abs(c):.1f}%</span>'
 
 
@@ -116,22 +138,20 @@ def fetch_insights(since, until, level="campaign", limit=50):
     return r.get("data", [])
 
 
-def get_page_token():
+def get_page_token(page_id):
     r = api(f"{BASE}/me/accounts", {"fields": "id,name,access_token"})
     pages = r.get("data", [])
-    hit = next((p for p in pages if p["id"] == PAGE_ID), None)
+    hit = next((p for p in pages if p["id"] == page_id), None)
     return hit["access_token"] if hit else None
 
 
-def get_all_forms(page_token):
-    r = api(f"{BASE}/{PAGE_ID}/leadgen_forms",
+def get_all_forms(page_token, page_id):
+    r = api(f"{BASE}/{page_id}/leadgen_forms",
             {"access_token": page_token, "fields": "id,name,leads_count", "limit": 50})
     return r.get("data", [])
 
 
 # ── navigation ────────────────────────────────────────────────────────
-st.title("📊 Meta Ads Agent")
-
 tab1, tab2, tab3, tab4 = st.tabs(["Dashboard", "Lead Lookup", "Deep Dive", "Interests"])
 
 
@@ -156,11 +176,10 @@ with tab1:
             rows = fetch_insights(since, until, level="campaign")
 
         if not rows:
-            st.warning("No data returned.")
+            st.warning("No data returned for this account.")
         else:
             total_spend  = sum(float(r.get("spend", 0)) for r in rows)
             total_leads  = sum(leads_count(r) for r in rows)
-            total_clicks = sum(int(r.get("clicks", 0)) for r in rows)
             avg_cpl      = total_spend / total_leads if total_leads else None
 
             c1, c2, c3 = st.columns(3)
@@ -188,8 +207,16 @@ with tab1:
 with tab2:
     st.subheader("Lead Lookup by Phone")
 
-    phone_raw = st.text_input("Mobile number", placeholder="9XXXXXXXXX or +919XXXXXXXX", key="phone_input")
-    date_filter = st.date_input("Date (leave today for today's leads)", value=datetime.now().date(), key="lead_date")
+    # Let user pick which page to search (each account may have its own page)
+    all_pages_raw = api(f"{BASE}/me/accounts", {"fields": "id,name"})
+    all_pages     = all_pages_raw.get("data", [])
+    page_options  = {f"{p['name']} ({p['id']})": p["id"] for p in all_pages} if all_pages else {"WeDezine Studio (111879133966646)": WDEZINE_PAGE_ID}
+
+    selected_page_label = st.selectbox("Facebook Page", list(page_options.keys()), key="page_picker")
+    selected_page_id    = page_options[selected_page_label]
+
+    phone_raw   = st.text_input("Mobile number", placeholder="9XXXXXXXXX or +919XXXXXXXX", key="phone_input")
+    date_filter = st.date_input("Date", value=datetime.now().date(), key="lead_date")
 
     if st.button("Search Lead", key="search_lead"):
         phone = phone_raw.strip().lstrip("+").lstrip("91") if phone_raw else ""
@@ -197,28 +224,27 @@ with tab2:
             st.error("Enter a valid 10-digit Indian mobile number.")
         else:
             with st.spinner("Connecting to Meta Lead Center…"):
-                page_token = get_page_token()
+                page_token = get_page_token(selected_page_id)
 
             if not page_token:
-                st.error("Could not get page token. Check your Meta access token in .env")
+                st.error("Could not get page token. Check your Meta access token.")
             else:
                 with st.spinner("Loading forms…"):
-                    forms = get_all_forms(page_token)
+                    forms = get_all_forms(page_token, selected_page_id)
 
-                found = False
+                found    = False
                 progress = st.progress(0, text="Searching forms…")
+
+                ist       = timezone(timedelta(hours=5, minutes=30))
+                day_start = datetime(date_filter.year, date_filter.month, date_filter.day, 0, 0, 0, tzinfo=ist)
+                day_end   = day_start + timedelta(days=1)
+                ts_start  = int(day_start.timestamp())
+                ts_end    = int(day_end.timestamp())
 
                 for idx, form in enumerate(forms):
                     fid   = form["id"]
                     fname = form.get("name", fid)
                     progress.progress((idx + 1) / len(forms), text=f"Checking: {fname[:30]}")
-
-                    # Build time filter for selected date (IST)
-                    ist = timezone(timedelta(hours=5, minutes=30))
-                    day_start = datetime(date_filter.year, date_filter.month, date_filter.day, 0, 0, 0, tzinfo=ist)
-                    day_end   = day_start + timedelta(days=1)
-                    ts_start  = int(day_start.timestamp())
-                    ts_end    = int(day_end.timestamp())
 
                     r = api(f"{BASE}/{fid}/leads", {
                         "access_token": page_token,
@@ -272,8 +298,8 @@ with tab3:
     level = st.selectbox("Level", ["campaign", "adset", "ad"], key="deep_level")
 
     if st.button("Run Comparison", key="run_deep"):
-        with st.spinner("Fetching current period…"):
-            today = datetime.now()
+        with st.spinner("Fetching…"):
+            today      = datetime.now()
             cur_end    = today.strftime("%Y-%m-%d")
             cur_start  = (today - timedelta(days=int(cur_days))).strftime("%Y-%m-%d")
             prev_end   = (today - timedelta(days=int(cur_days)+1)).strftime("%Y-%m-%d")
@@ -282,58 +308,56 @@ with tab3:
             cur_rows  = fetch_insights(cur_start, cur_end, level=level)
             prev_rows = fetch_insights(prev_start, prev_end, level=level)
 
-        name_key = {"campaign": "campaign_name", "adset": "adset_name", "ad": "ad_name"}[level]
-        prev_map = {r[name_key]: r for r in prev_rows}
+        if not cur_rows:
+            st.warning("No data returned for this account.")
+        else:
+            name_key = {"campaign": "campaign_name", "adset": "adset_name", "ad": "ad_name"}[level]
+            prev_map = {r[name_key]: r for r in prev_rows}
 
-        for row in sorted(cur_rows, key=lambda x: float(x.get("spend", 0)), reverse=True):
-            name = row.get(name_key, "—")
-            prev = prev_map.get(name, {})
+            for row in sorted(cur_rows, key=lambda x: float(x.get("spend", 0)), reverse=True):
+                name = row.get(name_key, "—")
+                prev = prev_map.get(name, {})
 
-            c_spend = float(row.get("spend", 0))
-            c_cpl_v = cpl(row)
-            c_leads = leads_count(row)
-            c_ctr   = float(row.get("ctr", 0))
-            c_cpm   = float(row.get("cpm", 0))
-            c_freq  = float(row.get("frequency", 0))
+                c_spend = float(row.get("spend", 0))
+                c_cpl_v = cpl(row)
+                c_leads = leads_count(row)
+                c_ctr   = float(row.get("ctr", 0))
+                c_cpm   = float(row.get("cpm", 0))
+                c_freq  = float(row.get("frequency", 0))
 
-            p_cpl_v = cpl(prev)
-            p_leads = leads_count(prev)
-            p_ctr   = float(prev.get("ctr", 0))
-            p_cpm   = float(prev.get("cpm", 0))
+                p_cpl_v = cpl(prev)
+                p_leads = leads_count(prev)
+                p_ctr   = float(prev.get("ctr", 0))
+                p_cpm   = float(prev.get("cpm", 0))
 
-            with st.expander(f"{name[:45]}  —  ₹{c_spend:,.0f}"):
-                # CPL comparison
-                cpl_html = ""
-                if p_cpl_v and c_cpl_v:
-                    cpl_html = pct_change(c_cpl_v, p_cpl_v)
+                with st.expander(f"{name[:45]}  —  ₹{c_spend:,.0f}"):
+                    cpl_html = pct_change(c_cpl_v, p_cpl_v) if (p_cpl_v and c_cpl_v) else ""
 
-                rows_html = f"""
-                <table width="100%">
-                  <tr><th align="left">Metric</th><th>Now</th><th>Prev</th><th>Δ</th></tr>
-                  <tr><td>Spend</td><td>{fmt_inr(c_spend)}</td><td>{fmt_inr(float(prev.get('spend',0)))}</td><td></td></tr>
-                  <tr><td>Leads</td><td>{c_leads}</td><td>{p_leads}</td><td>{pct_change_higher_better(c_leads, p_leads)}</td></tr>
-                  <tr><td>CPL</td><td>{fmt_inr(c_cpl_v)}</td><td>{fmt_inr(p_cpl_v)}</td><td>{cpl_html}</td></tr>
-                  <tr><td>CTR</td><td>{c_ctr:.2f}%</td><td>{p_ctr:.2f}%</td><td>{pct_change_higher_better(c_ctr, p_ctr)}</td></tr>
-                  <tr><td>CPM</td><td>{fmt_inr(c_cpm)}</td><td>{fmt_inr(p_cpm)}</td><td>{pct_change(c_cpm, p_cpm)}</td></tr>
-                  <tr><td>Freq</td><td>{c_freq:.2f}x</td><td>{float(prev.get('frequency',0)):.2f}x</td><td></td></tr>
-                </table>
-                """
-                st.markdown(rows_html, unsafe_allow_html=True)
+                    st.markdown(f"""
+                    <table width="100%">
+                      <tr><th align="left">Metric</th><th>Now</th><th>Prev</th><th>Δ</th></tr>
+                      <tr><td>Spend</td><td>{fmt_inr(c_spend)}</td><td>{fmt_inr(float(prev.get('spend',0)))}</td><td></td></tr>
+                      <tr><td>Leads</td><td>{c_leads}</td><td>{p_leads}</td><td>{pct_change_higher_better(c_leads, p_leads)}</td></tr>
+                      <tr><td>CPL</td><td>{fmt_inr(c_cpl_v)}</td><td>{fmt_inr(p_cpl_v)}</td><td>{cpl_html}</td></tr>
+                      <tr><td>CTR</td><td>{c_ctr:.2f}%</td><td>{p_ctr:.2f}%</td><td>{pct_change_higher_better(c_ctr, p_ctr)}</td></tr>
+                      <tr><td>CPM</td><td>{fmt_inr(c_cpm)}</td><td>{fmt_inr(p_cpm)}</td><td>{pct_change(c_cpm, p_cpm)}</td></tr>
+                      <tr><td>Freq</td><td>{c_freq:.2f}x</td><td>{float(prev.get('frequency',0)):.2f}x</td><td></td></tr>
+                    </table>
+                    """, unsafe_allow_html=True)
 
-                # Auto-diagnosis
-                issues = []
-                if p_cpm and c_cpm > p_cpm * 1.2:
-                    issues.append(f"🔴 CPM spike: {fmt_inr(p_cpm)} → {fmt_inr(c_cpm)}")
-                if p_ctr and c_ctr < p_ctr * 0.85:
-                    issues.append(f"🔴 CTR dropped: {p_ctr:.2f}% → {c_ctr:.2f}% — creative fatigue")
-                if c_freq > 2.5:
-                    issues.append(f"🔴 High frequency {c_freq:.2f}x — audience saturated")
-                if p_cpl_v and c_cpl_v and c_ctr >= (p_ctr * 0.9 if p_ctr else 0) and c_cpl_v > p_cpl_v * 1.3:
-                    issues.append("🔴 CTR OK but CPL rose — check lead form / landing page")
-                if issues:
-                    st.divider()
-                    for i in issues:
-                        st.markdown(i)
+                    issues = []
+                    if p_cpm and c_cpm > p_cpm * 1.2:
+                        issues.append(f"🔴 CPM spike: {fmt_inr(p_cpm)} → {fmt_inr(c_cpm)}")
+                    if p_ctr and c_ctr < p_ctr * 0.85:
+                        issues.append(f"🔴 CTR dropped: {p_ctr:.2f}% → {c_ctr:.2f}% — creative fatigue")
+                    if c_freq > 2.5:
+                        issues.append(f"🔴 High frequency {c_freq:.2f}x — audience saturated")
+                    if p_cpl_v and c_cpl_v and c_ctr >= (p_ctr * 0.9 if p_ctr else 0) and c_cpl_v > p_cpl_v * 1.3:
+                        issues.append("🔴 CTR OK but CPL rose — check lead form / landing page")
+                    if issues:
+                        st.divider()
+                        for i in issues:
+                            st.markdown(i)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -364,7 +388,6 @@ with tab4:
                 lb   = i.get("audience_size_lower_bound", 0)
                 path = " › ".join(i.get("path", []))
 
-                # Size label
                 if ub > 50_000_000:
                     size_tag = "🟡 Very broad"
                 elif ub > 10_000_000:
