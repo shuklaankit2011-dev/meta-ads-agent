@@ -67,11 +67,45 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# ── sidebar: token management ─────────────────────────────────────────
+with st.sidebar:
+    st.markdown("### 🔑 Token Management")
+
+    # override token from sidebar (survives the session)
+    new_token = st.text_input(
+        "Paste new Meta token",
+        type="password",
+        placeholder="EAAVFh1rZC...",
+        key="sidebar_token",
+    )
+    if new_token and new_token != st.session_state.get("active_token", ""):
+        st.session_state.active_token = new_token
+        st.success("Token updated for this session!")
+
+    if st.session_state.get("active_token"):
+        TOKEN = st.session_state.active_token  # override global
+
+    st.divider()
+    st.markdown("**Get a 60-day token (recommended):**")
+    st.markdown("1. Go to [Graph API Explorer](https://developers.facebook.com/tools/explorer)")
+    st.markdown("2. Generate token with `ads_read`, `pages_manage_ads`, `leads_retrieval`")
+    st.markdown("3. Click ··· → **Get Long-Lived User Token**")
+    st.markdown("4. Paste above ↑")
+
+    st.divider()
+    if st.button("🔌 Test current token", key="sidebar_test"):
+        me = requests.get(f"{BASE}/me", params={"access_token": TOKEN, "fields": "id,name"}).json()
+        if "error" in me:
+            st.error(me["error"]["message"])
+        else:
+            st.success(f"Valid — {me.get('name')}")
+
 
 # ── helpers ──────────────────────────────────────────────────────────
 def api(url, params=None):
     p = dict(params or {})
-    p["access_token"] = TOKEN
+    # always pick up token overridden via sidebar
+    p["access_token"] = st.session_state.get("active_token", TOKEN)
     r = requests.get(url, params=p, timeout=30)
     return r.json()
 
