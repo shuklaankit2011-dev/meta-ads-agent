@@ -116,6 +116,9 @@ def fetch_insights(account, since, until, level="campaign", limit=50):
         "time_range": json.dumps({"since": since, "until": until}),
         "level": level, "limit": limit,
     })
+    if "error" in r:
+        st.error(f"Meta API error: {r['error'].get('message', r['error'])}")
+        return []
     return r.get("data", [])
 
 
@@ -146,6 +149,20 @@ tab1, tab2, tab3, tab4 = st.tabs(["Dashboard", "Lead Lookup", "Deep Dive", "Inte
 # ══════════════════════════════════════════════════════════════════════
 with tab1:
     st.subheader("Campaign Overview")
+
+    if st.button("🔌 Test Connection", key="test_conn"):
+        with st.spinner("Checking token & account…"):
+            me = api(f"{BASE}/me", {"fields": "id,name"})
+            acct = api(f"{BASE}/{ACCOUNT}", {"fields": "id,name,account_status"})
+        if "error" in me:
+            st.error(f"Token invalid: {me['error']['message']}")
+        else:
+            st.success(f"Token OK — logged in as: {me.get('name')} ({me.get('id')})")
+        if "error" in acct:
+            st.error(f"Account error: {acct['error']['message']}")
+        else:
+            status = {1:"Active",2:"Disabled",3:"Unsettled",9:"In Grace Period"}.get(acct.get("account_status"),str(acct.get("account_status")))
+            st.success(f"Account: {acct.get('name','—')} | Status: {status}")
 
     period = st.selectbox("Period", ["Last 7 days", "Last 14 days", "Last 30 days", "This month"], key="dash_period")
     period_map = {"Last 7 days": 7, "Last 14 days": 14, "Last 30 days": 30, "This month": None}
