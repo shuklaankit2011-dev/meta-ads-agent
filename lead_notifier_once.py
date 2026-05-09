@@ -6,7 +6,7 @@ State (seen lead IDs + last timestamp) stored in seen_leads.json via Actions cac
 import os, json, requests
 from datetime import datetime, timezone, timedelta
 
-META_TOKEN   = os.environ.get("META_PAGE_TOKEN") or os.environ["META_ACCESS_TOKEN"]
+META_TOKEN   = os.environ["META_ACCESS_TOKEN"]
 TG_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TG_CHAT_ID   = os.environ["TELEGRAM_CHAT_ID"]
 BASE         = "https://graph.facebook.com/v18.0"
