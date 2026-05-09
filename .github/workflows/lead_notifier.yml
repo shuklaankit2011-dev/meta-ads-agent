@@ -1,0 +1,39 @@
+name: Lead Notifier
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'   # every 5 minutes, 24/7
+  workflow_dispatch:          # manual trigger button in GitHub UI
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Restore seen leads cache
+        uses: actions/cache@v4
+        with:
+          path: seen_leads.json
+          key: seen-leads-${{ github.run_id }}
+          restore-keys: seen-leads-
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run lead check
+        env:
+          META_ACCESS_TOKEN:   ${{ secrets.META_ACCESS_TOKEN }}
+          TELEGRAM_BOT_TOKEN:  ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:    ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python lead_notifier_once.py
+
+      - name: Save seen leads cache
+        uses: actions/cache@v4
+        with:
+          path: seen_leads.json
+          key: seen-leads-${{ github.run_id }}
