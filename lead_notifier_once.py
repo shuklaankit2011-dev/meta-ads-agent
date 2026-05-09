@@ -33,17 +33,17 @@ def meta_get(path, params=None):
     r = requests.get(f"{BASE}/{path}", params=p, timeout=30)
     return r.json()
 
-def get_pages():
-    return meta_get("me/accounts", {"fields": "id,name,access_token"}).get("data", [])
+# Known page IDs — system user accesses pages directly (no /me/accounts needed)
+PAGE_IDS = ["111879133966646"]   # WeDezine Studio — add more if needed
 
-def get_forms(page_token, page_id):
+def get_forms(page_id):
     return requests.get(f"{BASE}/{page_id}/leadgen_forms", params={
-        "access_token": page_token, "fields": "id,name", "limit": 50
+        "access_token": META_TOKEN, "fields": "id,name", "limit": 50
     }, timeout=30).json().get("data", [])
 
-def get_leads(page_token, form_id, since_ts):
+def get_leads(form_id, since_ts):
     return requests.get(f"{BASE}/{form_id}/leads", params={
-        "access_token": page_token,
+        "access_token": META_TOKEN,
         "fields": "id,field_data,created_time,ad_name,adset_name,campaign_name",
         "limit": 20,
         "filtering": json.dumps([
@@ -86,14 +86,9 @@ def main():
     since_ts = state["last_ts"]
     found    = 0
 
-    pages = get_pages()
-    if not pages:
-        print("No pages — check META_ACCESS_TOKEN")
-        return
-
-    for page in pages:
-        for form in get_forms(page["access_token"], page["id"]):
-            for lead in get_leads(page["access_token"], form["id"], since_ts):
+    for page_id in PAGE_IDS:
+        for form in get_forms(page_id):
+            for lead in get_leads(form["id"], since_ts):
                 lid = lead.get("id")
                 if lid in seen_ids:
                     continue
