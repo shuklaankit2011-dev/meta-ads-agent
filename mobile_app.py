@@ -166,13 +166,15 @@ def pct_change_higher_better(new, old):
     return f'<span class="{color}">{arrow}{abs(c):.1f}%</span>'
 
 
-def _fetch(account, since, until, level="campaign", limit=50):
+@st.cache_data(ttl=300, show_spinner=False)
+def _fetch(account, since, until, level="campaign", limit=50, _token=""):
     fields = "campaign_name,adset_name,ad_name,spend,impressions,reach,frequency,clicks,ctr,cpm,cpc,actions"
-    r = api(f"{BASE}/{account}/insights", {
+    r = requests.get(f"{BASE}/{account}/insights", params={
+        "access_token": _token,
         "fields": fields,
         "time_range": json.dumps({"since": since, "until": until}),
         "level": level, "limit": limit,
-    })
+    }, timeout=30).json()
     if "error" in r:
         return [], r["error"].get("message", "API error")
     return r.get("data", []), None
@@ -232,13 +234,17 @@ def _resolve_account(account_name: str) -> str:
 
 
 # ── Gemini tools ──────────────────────────────────────────────────────
+def _active_token():
+    return st.session_state.get("active_token", TOKEN) or TOKEN
+
+
 def get_campaign_performance(days: int = 7, account_name: str = "current") -> str:
     """Get campaign-level performance (spend, leads, CPL, CTR, CPM, frequency, reach).
     account_name: 'WeDezine Studio', 'WeDezine Unnamed', 'YOHO', or 'current' for default.
     Can be called multiple times for different accounts."""
     acc = _resolve_account(account_name)
     since, until = _date_range(days)
-    rows, err = _fetch(acc, since, until, "campaign")
+    rows, err = _fetch(acc, since, until, "campaign", _token=_active_token())
     label = account_name if account_name else "current"
     return f"[{label} | {acc}]\n" + (err or _fmt_rows(rows, "campaign"))
 
@@ -248,7 +254,7 @@ def get_adset_performance(days: int = 7, account_name: str = "current") -> str:
     account_name: 'WeDezine Studio', 'WeDezine Unnamed', 'YOHO', or 'current'."""
     acc = _resolve_account(account_name)
     since, until = _date_range(days)
-    rows, err = _fetch(acc, since, until, "adset")
+    rows, err = _fetch(acc, since, until, "adset", _token=_active_token())
     label = account_name if account_name else "current"
     return f"[{label} | {acc}]\n" + (err or _fmt_rows(rows, "adset"))
 
@@ -258,7 +264,7 @@ def get_ad_performance(days: int = 7, account_name: str = "current") -> str:
     account_name: 'WeDezine Studio', 'WeDezine Unnamed', 'YOHO', or 'current'."""
     acc = _resolve_account(account_name)
     since, until = _date_range(days)
-    rows, err = _fetch(acc, since, until, "ad")
+    rows, err = _fetch(acc, since, until, "ad", _token=_active_token())
     label = account_name if account_name else "current"
     return f"[{label} | {acc}]\n" + (err or _fmt_rows(rows, "ad"))
 
@@ -272,8 +278,9 @@ def compare_periods(current_days: int = 7, previous_days: int = 22, level: str =
     cur_start  = (today - timedelta(days=current_days)).strftime("%Y-%m-%d")
     prev_end   = (today - timedelta(days=current_days + 1)).strftime("%Y-%m-%d")
     prev_start = (today - timedelta(days=current_days + previous_days)).strftime("%Y-%m-%d")
-    cur,  e1 = _fetch(acc, cur_start,  cur_end,  level)
-    prev, e2 = _fetch(acc, prev_start, prev_end, level)
+    tok = _active_token()
+    cur,  e1 = _fetch(acc, cur_start,  cur_end,  level, _token=tok)
+    prev, e2 = _fetch(acc, prev_start, prev_end, level, _token=tok)
     if e1: return e1
     if e2: return e2
     label = account_name if account_name else "current"
@@ -492,7 +499,7 @@ with tab_dash:
         all_rows = []
         with st.spinner("Fetching…"):
             for acct_label, acct_id in accounts_to_fetch.items():
-                rows, err = _fetch(acct_id, since, until, level_key, limit=100)
+                rows, err = _fetch(acct_id, since, until, level_key, limit=100, _token=st.session_state.get("active_token", TOKEN) or TOKEN)
                 if err:
                     st.error(f"{acct_label}: {err}")
                     continue
@@ -707,8 +714,9 @@ with tab_deep:
             cur_start  = (today - timedelta(days=int(cur_days))).strftime("%Y-%m-%d")
             prev_end   = (today - timedelta(days=int(cur_days) + 1)).strftime("%Y-%m-%d")
             prev_start = (today - timedelta(days=int(cur_days) + int(prev_days))).strftime("%Y-%m-%d")
-            cur_rows,  e1 = _fetch(ACCOUNT, cur_start,  cur_end,  level)
-            prev_rows, e2 = _fetch(ACCOUNT, prev_start, prev_end, level)
+            tok = st.session_state.get("active_token", TOKEN) or TOKEN
+            cur_rows,  e1 = _fetch(DEFAULT_ACCOUNT, cur_start,  cur_end,  level, _token=tok)
+            prev_rows, e2 = _fetch(DEFAULT_ACCOUNT, prev_start, prev_end, level, _token=tok)
 
         if e1: st.error(e1)
         elif not cur_rows:
